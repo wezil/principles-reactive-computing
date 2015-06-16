@@ -1,0 +1,156 @@
+In this exercise you will develop a reactive graphical user interface for the Wikipedia Suggestions 
+application. This application will allow the user to enter a search term and in real time render a 
+list of possible completions of that search term from Wikipedia. After that, a user will be able to
+select one of the suggested terms and click Get, which will render the desired wikipedia page.
+
+Note: all the functionality you will be asked to implement in this assignment can be done using only
+the methods in the Scala wrapper of the Rx framework.
+Short introduction
+
+In this exercise you will use ScalaSwing to build a GUI for looking at Wikipedia pages. Later on, 
+the Swing GUI-related code you write needs to be tested, and to do this, your program logic needs 
+to be abstracted away from the Swing logic. If you would really like to understand the details of 
+how the Swing code is abstracted, you can take a look at the appendix sections at the end of this document.
+
+You should be able to solve this exercise completely without consulting the appendices, but if you
+get stuck with Swing, make sure to jump down to the end of this document!
+Observable extensions
+
+Most GUI toolkits are callback-based. They provide a plethora of different UI components like buttons 
+or text fields, which raise events when something happens to them. If you click a button, a 
+ButtonClicked event is raised and if you type into a text field, a ValueChanged event is raised. 
+To listen to these events, the programmer must install callbacks to corresponding components. 
+This approach of using callbacks and mutable state for designing large scale applications can quickly
+lead to what is known as the callback hell, due to the interactions between callbacks, where a 
+programmer can no longer make sense of the code he wrote.
+
+Instead of using callbacks, we would like to handle event streams. Event streams are first-class 
+values that are handled in a more declarative fashion than callbacks and are more encapsulated. 
+Event streams can be represented using Rx Observables. In this part of the exercise you will implement
+several Observables that emit values whenever a Swing component event is raised. This is a common 
+pattern when bridging between callback-based and reactive stream-based systems – remember it well!
+
+Your task is to implement the following methods in SwingApi.scala by using the 
+Observable.create(f: Observer => Subscription) factory method. You will find these methods in the 
+implicit classes for the TextFields and Buttons:
+
+def textValues: Observable[String] = ???
+
+def clicks: Observable[Button] = ???
+
+Note: the clicks method should return an observable containing the reference to the particular button
+that was clicked (although in this assignment there will only be one single button in the GUI).
+
+Scala Swing components can be subscribed to by creating Reaction objects. These Reaction objects 
+in essence wrap PartialFunctions that handle Scala Swing events that correspond to the component 
+the Reaction is used for. For the purpose of this exercise, you can ignore all events other than 
+button presses and changes to the textfield.
+
+Be sure to understand the Observable contract before you begin.
+Wikipedia suggestion utilities
+
+In the last part of the exercise you implemented Observables over different input events. In this 
+part you will implement some utility functions over Observables that will help you complete the 
+GUI functionality in the final part. Creating Observables manually the way we did it in the last 
+part is generally discouraged. Instead, you should use combinators on Observables wherever possible 
+to compose them into more complex ones.
+
+The Wikipedia API is factored out in the WikipediaApi trait. It contains two abstract methods:
+
+def wikipediaSuggestion(term: String): Future[List[String]]
+
+def wikipediaPage(term: String): Future[String]
+
+These methods return futures with a list of possible completions for a search term and the
+corresponding Wikipedia page, respectively. However, search terms sent in an HTTP request cannot
+contain spaces! Instead, all spaces in a search term should be replaced with an underscore _. 
+Your task is to implement a method sanitized in WikipediaApi.scala that, given a stream of search 
+terms returns a new stream of search terms such that all the search terms containing spaces are 
+properly replaced. You will find the sanitized method in the StringObservableOps implicit class:
+
+def sanitized: Observable[String] = ???
+
+See description of Observable combinator methods for ideas on how to achieve this.
+
+Observables might be completed with errors. When composing multiple Observables, errors from one 
+of them can easily leak into the resulting Observable and complete it by calling onError. 
+To prevent this from happening, any exceptions in the Observable should be wrapped into Failure 
+objects that can be dealt with as if they were ordinary values. Your next task is to implement the
+method recovered which converts any Observable[T] into an Observable[Try[T]] (hint: consider using
+the map and onErrorReturn method):
+
+def recovered: Observable[Try[T]] = ???
+
+Next, implement a combinator timedOut that given an observable obs and takes a number of seconds
+totalSec, and returns a new observable that contains all the events from obs that happened before 
+totalSec seconds elapse. If the obs combinator is completed or failed before the timeout, the resulting 
+observable should also be completed or failed, respectively. If the obs combinator does not complete
+before the timeout, the resulting observable should be completed after the timeout.
+
+def timedOut(totalSec: Long): Observable[T] = ???
+
+Finally, sometimes observables are created from more than just one other observable. In our case,
+the list of suggestions depends on both the search field and the suggestions for each search term.
+
+Your final task in this part is to implement a method concatRecovered that, given a request stream 
+obs and a method to map elements of the request stream (i.e. single requests) into response streams,
+returns a single response stream that contains all the responses, both successful and failed, 
+wrapped into a Try object:
+
+def concatRecovered[S](requestMethod: T => Observable[S]): Observable[Try[S]] = ???
+
+Putting it all together
+
+We now have all the ingredients to complete our Wikipedia Suggestions application! Open 
+WikipediaSuggest.scala – you will see the body of the main Scala Swing based application. 
+The pieces that concern the static part of the UI are already implemented for you – your task is to
+add some reactive behavior to this application.
+
+The UI currently contains a text field called searchTermField. Your first task is to construct 
+an observable of text field entries called searchTerms:
+
+val searchTerms: Observable[String] = ???
+
+Next, use the searchTerms observable to create an observable of lists of suggestions in which 
+each list of suggestion corresponds to one search term. If any of the suggestion lists requests 
+fail (make sure you don’t wait forever), we would like to have the throwable to print the error 
+message, so we wrap the result into a Try. Use the methods defined earlier in the WikipediaApi:
+
+val suggestions: Observable[Try[List[String]]] = ???
+
+The suggestions observable should now be updated while you type. Problem is – there is no way to
+see these changes yet in the UI! To display them, we need to update the contents of a component 
+called suggestionList every time the observable produces a value. If the suggestions value is not
+successful, we must print the error message into the status label. Use the subscribe method on 
+suggestions to do this:
+
+val suggestionSubscription: Subscription = ???
+
+Note: all the updates for all the Swing components may only take place from a special thread called
+the event dispatch thread. To ensure that the subscription reaction takes place on the event 
+dispatch thread, use the observeOn combinator. See the ScalaDoc for more information.
+
+Our application would be pretty boring if it were only able to give search term suggestions. 
+We would like to pick one of the search term in the list of suggestions and press Get to obtain the
+contents of the corresponding Wikipedia page and display it in the panel on the right side of the UI.
+
+Your next task will be to obtain an observable selections of button clicks that contains the search
+terms selected in the suggestion list at the time the button was clicked. If the suggestion list 
+had no items selected, then the click should not be part of selections.
+
+val selections: Observable[String] = ???
+
+Next, use the selections observable to obtain an observable of the Wikipedia pages corresponding 
+to the respective search term (use the previously defined methods from the WikipediaApi):
+
+val pages: Observable[Try[String]] = ???
+
+Again, requests above may fail, so we want to wrap them into Try.
+
+Finally, the observable pages is of little worth unless its values are rendered somewhere. Subscribe
+to the pages observable to update the editorpane with the contents of the response.
+
+The final application should resemble the following screenshot. Run your application (type run in SBT)
+and type in “Erik Meijer”, then select the first option from the list and click “Get”. Below you see
+the corresponding Wikipedia page. It tells us that Erik was previously a 6ft high professional 
+footballer, so you better not mess with him!
